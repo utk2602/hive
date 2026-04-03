@@ -55,6 +55,7 @@ class SessionProgress(BaseModel):
     had_partial_failures: bool = False
     execution_quality: str = "clean"  # "clean", "degraded", or "failed"
     node_visit_counts: dict[str, int] = Field(default_factory=dict)
+    node_latencies: dict[str, int] = Field(default_factory=dict)  # {node_id: latency_ms}
 
     model_config = {"extra": "allow"}
 
@@ -237,6 +238,7 @@ class SessionState(BaseModel):
                 had_partial_failures=result.had_partial_failures,
                 execution_quality=result.execution_quality,
                 node_visit_counts=result.node_visit_counts,
+                node_latencies=result.node_latencies,
             ),
             result=SessionResult(
                 success=result.success,
@@ -306,4 +308,5 @@ class SessionState(BaseModel):
             "memory": self.memory,
             "execution_path": self.progress.path,
             "node_visit_counts": self.progress.node_visit_counts,
+            "node_latencies": self.progress.node_latencies,
         }

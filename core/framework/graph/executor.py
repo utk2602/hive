@@ -246,6 +246,7 @@ class GraphExecutor:
         path: list[str],
         memory: Any,
         node_visit_counts: dict[str, int],
+        node_latencies: dict[str, int] | None = None,
     ) -> None:
         """Update state.json with live progress at node transitions.
 
@@ -273,6 +274,8 @@ class GraphExecutor:
             progress["current_node"] = current_node
             progress["path"] = list(path)
             progress["node_visit_counts"] = dict(node_visit_counts)
+            if node_latencies is not None:
+                progress["node_latencies"] = dict(node_latencies)
             progress["steps_executed"] = len(path)
 
             # Update timestamp
@@ -568,6 +571,12 @@ class GraphExecutor:
         node_latencies: dict[str, int] = {}  # Per-node latency breakdown
         _is_retry = False  # True when looping back for a retry (not a new visit)
 
+        # Restore node_latencies from session state if available
+        if session_state and "node_latencies" in session_state:
+            node_latencies = dict(session_state["node_latencies"])
+            if node_latencies:
+                self.logger.info(f"📥 Restored node latencies: {node_latencies}")
+
         # Restore node_visit_counts from session state if available
         if session_state and "node_visit_counts" in session_state:
             node_visit_counts = dict(session_state["node_visit_counts"])
@@ -796,6 +805,7 @@ class GraphExecutor:
                         "memory": saved_memory,  # Include memory for resume
                         "execution_path": list(path),
                         "node_visit_counts": dict(node_visit_counts),
+                        "node_latencies": dict(node_latencies),
                     }
 
                     # Create a pause checkpoint
@@ -990,10 +1000,15 @@ class GraphExecutor:
                     _node_elapsed_ms = int((time.perf_counter() - _node_start) * 1000)
                     if _node_result is not None and _node_result.latency_ms == 0:
                         _node_result.latency_ms = _node_elapsed_ms
-                    node_latencies[current_node_id] = (
-                        node_latencies.get(current_node_id, 0)
-                        + (_node_result.latency_ms if _node_result is not None else _node_elapsed_ms)
+                    _lat = (
+                        _node_result.latency_ms
+                        if _node_result is not None
+                        else _node_elapsed_ms
                     )
+                    node_latencies[current_node_id] = (
+                        node_latencies.get(current_node_id, 0) + _lat
+                    )
+                    total_latency += _lat
 
                 # GCU tab cleanup: stop the browser profile after a top-level GCU node
                 # finishes so tabs don't accumulate. Mirrors the subagent cleanup in
@@ -1099,7 +1114,6 @@ class GraphExecutor:
                     self.logger.error(f"   ✗ Failed: {result.error}")
 
                 total_tokens += result.tokens_used
-                total_latency += result.latency_ms
 
                 # Handle failure
                 if not result.success:
@@ -1316,7 +1330,9 @@ class GraphExecutor:
                         )
 
                     current_node_id = result.next_node
-                    self._write_progress(current_node_id, path, memory, node_visit_counts)
+                    self._write_progress(
+                        current_node_id, path, memory, node_visit_counts, node_latencies
+                    )
                 else:
                     # Get all traversable edges for fan-out detection
                     traversable_edges = await self._get_all_traversable_edges(
@@ -1375,7 +1391,10 @@ class GraphExecutor:
                         if fan_in_node:
                             self.logger.info(f"   ⑃ Fan-in: converging at {fan_in_node}")
                             current_node_id = fan_in_node
-                            self._write_progress(current_node_id, path, memory, node_visit_counts)
+                            self._write_progress(
+                                current_node_id, path, memory,
+                                node_visit_counts, node_latencies,
+                            )
                         else:
                             # No convergence point - branches are terminal
                             self.logger.info("   → Parallel branches completed (no convergence)")
@@ -1440,7 +1459,9 @@ class GraphExecutor:
                         current_node_id = next_node
 
                 # Write progress snapshot at node transition
-                self._write_progress(current_node_id, path, memory, node_visit_counts)
+                self._write_progress(
+                    current_node_id, path, memory, node_visit_counts, node_latencies
+                )
 
                 # Continuous mode: thread conversation forward with transition marker
                 if is_continuous and result.conversation is not None:
