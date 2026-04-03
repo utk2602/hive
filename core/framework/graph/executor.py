@@ -982,13 +982,18 @@ class GraphExecutor:
                 # Execute node
                 self.logger.info("   Executing...")
                 _node_start = time.perf_counter()
-                result = await node_impl.execute(ctx)
-                _node_elapsed_ms = int((time.perf_counter() - _node_start) * 1000)
-                if result.latency_ms == 0:
-                    result.latency_ms = _node_elapsed_ms
-                node_latencies[current_node_id] = (
-                    node_latencies.get(current_node_id, 0) + result.latency_ms
-                )
+                _node_result: NodeResult | None = None
+                try:
+                    result = await node_impl.execute(ctx)
+                    _node_result = result
+                finally:
+                    _node_elapsed_ms = int((time.perf_counter() - _node_start) * 1000)
+                    if _node_result is not None and _node_result.latency_ms == 0:
+                        _node_result.latency_ms = _node_elapsed_ms
+                    node_latencies[current_node_id] = (
+                        node_latencies.get(current_node_id, 0)
+                        + (_node_result.latency_ms if _node_result is not None else _node_elapsed_ms)
+                    )
 
                 # GCU tab cleanup: stop the browser profile after a top-level GCU node
                 # finishes so tabs don't accumulate. Mirrors the subagent cleanup in
@@ -2245,10 +2250,16 @@ class GraphExecutor:
                         f"      ▶ Branch {node_spec.name}: executing (attempt {attempt + 1})"
                     )
                     _branch_start = time.perf_counter()
-                    result = await node_impl.execute(ctx)
-                    _branch_elapsed_ms = int((time.perf_counter() - _branch_start) * 1000)
-                    if result.latency_ms == 0:
-                        result.latency_ms = _branch_elapsed_ms
+                    _branch_result: NodeResult | None = None
+                    try:
+                        result = await node_impl.execute(ctx)
+                        _branch_result = result
+                    finally:
+                        _branch_elapsed_ms = int(
+                            (time.perf_counter() - _branch_start) * 1000
+                        )
+                        if _branch_result is not None and _branch_result.latency_ms == 0:
+                            _branch_result.latency_ms = _branch_elapsed_ms
                     last_result = result
 
                     # Ensure L2 entry for this branch node
